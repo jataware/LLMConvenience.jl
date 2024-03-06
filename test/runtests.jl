@@ -1,4 +1,4 @@
-import LLMConvenience: handle_response, get_member_docs, installed_dependencies, get_source, session_state
+import LLMConvenience: handle_response, fetch_docs, installed_dependencies, get_source, session_state
 import JSON3
 import Test: @test, @testset
 
@@ -25,8 +25,8 @@ end
 using .ExampleModule
 
 @testset "Member Documentation" begin
-    @test get_member_docs("example_function").content == "{\"example_function\":\"example_function docs\\n\"}"
-    #@test JSON3.read(get_member_docs(ExampleModule).content).ExampleStruct == "ExampleStruct docs\n"
+    @test fetch_docs("example_function").content == "{\"example_function\":\"example_function docs\\n\"}"
+    #@test JSON3.read(fetch_docs(ExampleModule).content).ExampleStruct == "ExampleStruct docs\n"
 end
 
 @testset "Installed Dependencies" begin

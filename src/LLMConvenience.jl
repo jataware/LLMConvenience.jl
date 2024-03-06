@@ -1,24 +1,15 @@
 module LLMConvenience
 
-export handle_response, get_member_docs, session_state
+export handle_response, fetch_docs, installed_dependencies, get_source, session_state
 import Pkg
 using Revise
 import CodeTracking: definition, signature_at, whereis
 import Malt
 import JSON3, DisplayAs
 
-
 handle_response(dict::AbstractDict) = DisplayAs.unlimited(JSON3.write(dict))
 handle_response(x) = handle_response(Dict("result" => x))
 
-
-"""
-Provide docs for members in `Main` given a string containing comma-separated function names.
-"""
-function get_member_docs(raw_string::String)
-    member_names = split(raw_string, ",")
-    get_member_docs(member_names)
-end
 
 function get_doc(x::Symbol, module_name::Symbol)
     doc = eval(:(@doc $module_name.$x))
@@ -30,10 +21,19 @@ function get_doc(x::Symbol, module_name::Symbol)
 end
 
 """
-Provide docs for selected members currently available in `Main`
+Provide docs for members in `Main` given a string containing comma-separated function names.
 """
-function get_member_docs(member_names::AbstractVector{<:AbstractString}; mod::Module=Main)
-    docs = Dict(func => get_doc(func, Symbol(mod)) for func in Symbol.(member_names))
+function fetch_docs(raw_string::String)
+    member_names = Symbol.(split(raw_string, ","))
+    fetch_docs(member_names, :Main)
+end
+
+
+"""
+Provide docs for selected members
+"""
+function fetch_docs(member_names::AbstractVector{Symbol}, module_name::Symbol = :Main)
+    docs = Dict(func => get_doc(func, module_name) for func in member_names)
     handle_response(docs)
 end
 
