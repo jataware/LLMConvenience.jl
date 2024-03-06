@@ -1,0 +1,18 @@
+name = "LLMConvenience"
+uuid = "093a9562-ec77-459b-9d02-e35725675330"
+authors = ["Five Grant <5@fivegrant.com>"]
+version = "0.1.0"
+
+[deps]
+CodeTracking = "da1fd8a2-8d9e-5ec2-8556-3022fb5608a2"
+DisplayAs = "0b91fe84-8a4c-11e9-3e1d-67c38462b6d6"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+Malt = "36869731-bdee-424d-aa32-cab38c994e3b"
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

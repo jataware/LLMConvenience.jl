@@ -1,0 +1,6 @@
+deps/
+Manifest.toml
+
+# Misc. 
+.DS_Store
+.vscode
