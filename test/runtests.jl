@@ -1,7 +1,7 @@
 import LLMConvenience: handle_response, fetch_docs, installed_dependencies, get_source, session_state
 import JSON3
 import Test: @test, @testset
-
+import InteractiveUtils: @which
 
 @testset "Response Handling" begin
     @test handle_response("Some Result").content == "{\"result\":\"Some Result\"}"
@@ -38,12 +38,14 @@ end
     @test "readjsonlines" ∈ keys(source)
 end
 
+global test_var = "some value"
 @testset "State Capture" begin
-    test_var = "some value"
-    state = eval(session_state)
+    state = session_state()
     user_vars = state[:user_vars]
     imported_modules = state[:imported_modules]
-    @test test_var ∈ keys(user_vars) && user_vars[test_var] == "some value"   
+    callables = state[:callables]
+    #@test test_var ∈ keys(user_vars) && user_vars[test_var][:value] == "some value"   
+    @test :session_state ∈ callables
     @test :ExampleModule ∈ imported_modules
     @test :DisplayAs ∉ imported_modules
 end

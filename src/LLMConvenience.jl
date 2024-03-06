@@ -11,14 +11,19 @@ handle_response(dict::AbstractDict) = DisplayAs.unlimited(JSON3.write(dict))
 handle_response(x) = handle_response(Dict("result" => x))
 
 
-function get_doc(x::Symbol, module_name::Symbol)
-    doc = eval(:(@doc $module_name.$x))
+function get_doc(x)
+    doc = eval(:(@doc $x))
     if length(doc) >= 23 && doc[1:23] == "No documentation found."
         nothing
     else
         string(doc)
     end
 end
+
+function get_doc(x::Symbol, module_name::Symbol=:Main)
+    get_doc(:($module_name.$x))
+end
+
 
 """
 Provide docs for members in `Main` given a string containing comma-separated function names.
@@ -28,12 +33,20 @@ function fetch_docs(raw_string::String)
     fetch_docs(member_names, :Main)
 end
 
-
 """
 Provide docs for selected members
 """
 function fetch_docs(member_names::AbstractVector{Symbol}, module_name::Symbol = :Main)
     docs = Dict(func => get_doc(func, module_name) for func in member_names)
+    handle_response(docs)
+end
+
+"""
+Fetch docs for module and its members
+"""
+function fetch_docs(mod::Module)
+    docs = Dict(:module => get_doc(mod))
+    docs[:functions] = Dict(func => get_doc(func) for func in names(mod))
     handle_response(docs)
 end
 
@@ -86,31 +99,40 @@ end
 # end
 
 """
-Expression that indicates the currently available modules and user-defined variables in the current session.
-"""
-session_state = 
-    # TODO: Run this within the module instead of exporting an expression
-    quote
-        _ignored_symbols = [:Base, :Core, :InteractiveUtils, :Main, :LLMConvenience]
-        _is_visible_type(s) = any((x) -> isa(eval(:(Main.$(s))), x), [DataType, Function, Module]) 
-        _is_hidden_name(s) = string(s)[1] == '_' || s ∈ _ignored_symbols
-        _is_hidden(s) = _is_hidden_name(s) || !_is_visible_type(s)
+Expression that indicates the currently available modules, user-defined variables, and callables 
+like functions in the current session.
 
-        _state = Dict(
-            :user_vars => Dict(),
-            :imported_modules => [],
-        )
-        _var_names = filter(!_is_hidden, names(Main))
-        for var in _var_names
-            value = getproperty(Main, var)
-            if isa(value, Module)
-                push!(_state[:imported_modules], var)
-            else
-                _state[:user_vars][var] = string(value)
-            end
+Currently, this pollutes the global namespace with 'hidden' variables i.e variables prepended with '_'.
+"""
+function session_state() 
+    @eval Main begin
+    _ignored_symbols = [:Base, :Core, :InteractiveUtils, :Main, :LLMConvenience]
+    _is_visible_type(s) = any((x) -> isa(eval(:(Main.$(s))), x), [DataType, Function, Module]) 
+    _is_hidden_name(s) = string(s)[1] ∈ ['_', '#'] || s ∈ _ignored_symbols
+    _is_hidden(s) = _is_hidden_name(s) || !_is_visible_type(s)
+
+    _state = Dict(
+        :user_vars => Dict(),
+        :imported_modules => Symbol[],
+        :callables => Symbol[],
+   )
+    _var_names = filter(!_is_hidden, names(Main; all=true, imported=true))
+    for var in _var_names
+        value = getproperty(Main, var)
+        if isa(value, Module)
+            push!(_state[:imported_modules], var)
+        elseif typeof(value) <: Function
+            push!(_state[:callables], var)
+        else
+            _state[:user_vars][var] = Dict(
+                :value => string(value),
+                :type => string(typeof(value))
+            )
         end
-        _state
     end
+    _state
+    end
+end
 
 
 end # module LLMConvenience
