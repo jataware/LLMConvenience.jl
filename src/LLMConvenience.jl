@@ -11,14 +11,6 @@ import JSON3, DisplayAs
 handle_response(dict::AbstractDict) = DisplayAs.unlimited(JSON3.write(dict))
 handle_response(x) = handle_response(Dict("result" => x))
 
-function get_doc(x)
-    doc = @doc(x)
-    if length(doc) >= 23 && doc[1:23] == "No documentation found."
-        nothing
-    else
-        string(doc)
-    end
-end
 
 """
 Provide docs for members in `Main` given a string containing comma-separated function names.
@@ -28,12 +20,20 @@ function get_member_docs(raw_string::String)
     get_member_docs(member_names)
 end
 
+function get_doc(x::Symbol, module_name::Symbol)
+    doc = eval(:(@doc $module_name.$x))
+    if length(doc) >= 23 && doc[1:23] == "No documentation found."
+        nothing
+    else
+        string(doc)
+    end
+end
+
 """
 Provide docs for selected members currently available in `Main`
 """
-function get_member_docs(member_names::AbstractVector{<:AbstractString})
-    get_doc(func) = string(eval(:(@doc Main.$(Symbol(func)))))
-    docs = Dict(func => get_doc(func) for func in member_names)
+function get_member_docs(member_names::AbstractVector{<:AbstractString}; mod::Module=Main)
+    docs = Dict(func => get_doc(func, Symbol(mod)) for func in Symbol.(member_names))
     handle_response(docs)
 end
 
