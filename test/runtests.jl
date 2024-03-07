@@ -54,5 +54,5 @@ end
 
 @testset "Parseable" begin
     @test parse_check("1 + 1").success
-    @test !is_parseable("1 +").success
+    @test !parse_check("1 +").success
 end
