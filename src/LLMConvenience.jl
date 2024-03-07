@@ -1,6 +1,6 @@
 module LLMConvenience
 
-export handle_response, fetch_docs, installed_dependencies, get_source, session_state, is_parseable
+export handle_response, fetch_docs, installed_dependencies, get_source, session_state, parse_check
 import Pkg
 using Revise
 import CodeTracking: definition, signature_at, whereis
@@ -189,12 +189,12 @@ StructTypes.StructType(::Type{Result}) = StructTypes.Struct()
 """
 Check if the given code will parse
 """
-function is_parseable(code::AbstractString)
+function parse_check(code::AbstractString)
     expr = nothing
     try
         expr = Meta.parse(code)
     catch e
-        result = Result(false, string(e))
+        Result(false, string(e))
     else
         success = expr.head !== :incomplete
         Result(success, string(expr))
