@@ -1,4 +1,4 @@
-import LLMConvenience: handle_response, fetch_docs, installed_dependencies, get_source, session_state
+import LLMConvenience: handle_response, fetch_docs, installed_dependencies, get_source, session_state, is_parseable
 import JSON3
 import Test: @test, @testset
 import InteractiveUtils: @which
@@ -50,4 +50,7 @@ global test_var = "some value"
     @test :DisplayAs ∉ imported_modules
 end
 
-
+@testset "Parseable" begin
+    @test is_parseable("1 + 1").success
+    @test !is_parseable("1 +").success
+end

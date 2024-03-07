@@ -1,11 +1,14 @@
 module LLMConvenience
 
-export handle_response, fetch_docs, installed_dependencies, get_source, session_state
+export handle_response, fetch_docs, installed_dependencies, get_source, session_state, is_parseable
 import Pkg
 using Revise
 import CodeTracking: definition, signature_at, whereis
+import StructTypes, JSON3, DisplayAs
 import Malt
-import JSON3, DisplayAs
+
+
+include("cloneworker.jl")
 
 handle_response(dict::AbstractDict) = DisplayAs.unlimited(JSON3.write(dict))
 handle_response(x) = handle_response(Dict("result" => x))
@@ -131,6 +134,29 @@ function session_state()
         end
     end
     _state
+    end
+end
+
+
+struct Result 
+    success::Bool
+    reason::Union{String, Nothing}
+end
+
+StructTypes.StructType(::Type{Result}) = StructTypes.Struct()
+
+"""
+Check if the given code will parse
+"""
+function is_parseable(code::AbstractString)
+    expr = nothing
+    try
+        expr = Meta.parse(code)
+    catch e
+        result = Result(false, string(e))
+    else
+        success = expr.head !== :incomplete
+        Result(success, string(expr))
     end
 end
 
