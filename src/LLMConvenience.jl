@@ -10,8 +10,12 @@ import Malt
 
 include("cloneworker.jl")
 
-handle_response(dict::AbstractDict) = DisplayAs.unlimited(JSON3.write(dict))
-handle_response(x) = handle_response(Dict("result" => x))
+"""
+Return response as an `application/json` content type
+"""
+function handle_response end
+handle_response(obj) = DisplayAs.unlimited(JSON3.write(obj))
+handle_response(x::AbstractString) = handle_response(Dict("result" => x))
 
 
 function get_doc(x)
@@ -101,6 +105,42 @@ end
 #     handle_response(docs)
 # end
 
+struct VarInfo
+    value::Any
+    type::String
+end
+
+struct SessionState
+    user_vars::Dict{Symbol, VarInfo}
+    imported_modules::Vector{Symbol}
+    callables::Vector{Symbol}
+end
+
+SessionState(d::AbstractDict) = SessionState(
+    Dict(VarInfo(entry[:value], entry[:type]) for entry in d[:user_vars]),
+    d[:imported_modules],
+    d[:callables]
+)
+
+"""
+Handle conversion to `application/json` content type for SessionState
+
+A separate method is needed since `SessionState` cannot use StructTypes
+"""
+function handle_response(state::SessionState)
+    dict = Dict(
+        :user_vars => Dict(
+            var => Dict(
+                :value => var_info.value,
+                :type => var_info.type
+            ) for (var, var_info) in state.user_vars
+        ),
+        :imported_modules => state.imported_modules,
+        :callables => state.callables
+    )
+    handle_response(dict)
+end
+
 """
 Expression that indicates the currently available modules, user-defined variables, and callables 
 like functions in the current session.
@@ -108,33 +148,34 @@ like functions in the current session.
 Currently, this pollutes the global namespace with 'hidden' variables i.e variables prepended with '_'.
 """
 function session_state() 
-    @eval Main begin
-    _ignored_symbols = [:Base, :Core, :InteractiveUtils, :Main, :LLMConvenience]
-    _is_visible_type(s) = any((x) -> isa(eval(:(Main.$(s))), x), [DataType, Function, Module]) 
-    _is_hidden_name(s) = string(s)[1] ∈ ['_', '#'] || s ∈ _ignored_symbols
-    _is_hidden(s) = _is_hidden_name(s) || !_is_visible_type(s)
+    state = @eval Main begin
+        _ignored_symbols = [:Base, :Core, :InteractiveUtils, :Main, :LLMConvenience]
+        _is_visible_type(s) = any((x) -> isa(eval(:(Main.$(s))), x), [DataType, Function, Module]) 
+        _is_hidden_name(s) = string(s)[1] ∈ ['_', '#'] || s ∈ _ignored_symbols
+        _is_hidden(s) = _is_hidden_name(s) || !_is_visible_type(s)
 
-    _state = Dict(
-        :user_vars => Dict(),
-        :imported_modules => Symbol[],
-        :callables => Symbol[],
-   )
-    _var_names = filter(!_is_hidden, names(Main; all=true, imported=true))
-    for var in _var_names
-        value = getproperty(Main, var)
-        if isa(value, Module)
-            push!(_state[:imported_modules], var)
-        elseif typeof(value) <: Function
-            push!(_state[:callables], var)
-        else
-            _state[:user_vars][var] = Dict(
-                :value => string(value),
-                :type => string(typeof(value))
-            )
+        _state = Dict(
+            :user_vars => Dict(),
+            :imported_modules => Symbol[],
+            :callables => Symbol[],
+    )
+        _var_names = filter(!_is_hidden, names(Main; all=true, imported=true))
+        for var in _var_names
+            value = getproperty(Main, var)
+            if isa(value, Module)
+                push!(_state[:imported_modules], var)
+            elseif typeof(value) <: Function
+                push!(_state[:callables], var)
+            else
+                _state[:user_vars][var] = Dict(
+                    :value => string(value),
+                    :type => string(typeof(value))
+                )
+            end
         end
+        _state
     end
-    _state
-    end
+    SessionState(state)
 end
 
 

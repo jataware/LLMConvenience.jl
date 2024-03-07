@@ -41,13 +41,15 @@ end
 global test_var = "some value"
 @testset "State Capture" begin
     state = session_state()
-    user_vars = state[:user_vars]
-    imported_modules = state[:imported_modules]
-    callables = state[:callables]
+    state_as_json = JSON3.read(handle_response(state).content)
+    user_vars = state.user_vars
+    imported_modules = state.imported_modules
+    callables = state.callables
     #@test test_var ∈ keys(user_vars) && user_vars[test_var][:value] == "some value"   
     @test :session_state ∈ callables
     @test :ExampleModule ∈ imported_modules
     @test :DisplayAs ∉ imported_modules
+    @test length(state_as_json[:user_vars]) == length(user_vars)
 end
 
 @testset "Parseable" begin
