@@ -117,7 +117,7 @@ struct SessionState
 end
 
 SessionState(d::AbstractDict) = SessionState(
-    Dict(VarInfo(entry[:value], entry[:type]) for entry in d[:user_vars]),
+    Dict(name => VarInfo(entry[:value], entry[:type]) for (name, entry) in d[:user_vars]),
     d[:imported_modules],
     d[:callables]
 )
@@ -150,15 +150,14 @@ Currently, this pollutes the global namespace with 'hidden' variables i.e variab
 function session_state() 
     state = @eval Main begin
         _ignored_symbols = [:Base, :Core, :InteractiveUtils, :Main, :LLMConvenience]
-        _is_visible_type(s) = any((x) -> isa(eval(:(Main.$(s))), x), [DataType, Function, Module]) 
         _is_hidden_name(s) = string(s)[1] ∈ ['_', '#'] || s ∈ _ignored_symbols
-        _is_hidden(s) = _is_hidden_name(s) || !_is_visible_type(s)
+        _is_hidden(s) = _is_hidden_name(s)
 
         _state = Dict(
             :user_vars => Dict(),
             :imported_modules => Symbol[],
             :callables => Symbol[],
-    )
+        )
         _var_names = filter(!_is_hidden, names(Main; all=true, imported=true))
         for var in _var_names
             value = getproperty(Main, var)
