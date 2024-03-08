@@ -43,8 +43,8 @@ global test_var = "some value"
     state = session_state()
     state_as_json = JSON3.read(handle_response(state).content)
     user_vars = state.user_vars
-    imported_modules = state.imported_modules
-    callables = state.callables
+    imported_modules = keys(state.imported_modules)
+    callables = keys(state.callables)
     #@test test_var ∈ keys(user_vars) && user_vars[test_var][:value] == "some value"   
     @test :session_state ∈ callables
     @test :ExampleModule ∈ imported_modules

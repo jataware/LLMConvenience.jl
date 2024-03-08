@@ -8,8 +8,6 @@ import StructTypes, JSON3, DisplayAs
 import Malt
 
 
-include("cloneworker.jl")
-
 """
 Return response as an `application/json` content type
 """
@@ -112,8 +110,8 @@ end
 
 struct SessionState
     user_vars::Dict{Symbol, VarInfo}
-    imported_modules::Vector{Symbol}
-    callables::Vector{Symbol}
+    imported_modules::Dict{Symbol, Module}
+    callables::Dict{Symbol, Any}
 end
 
 SessionState(d::AbstractDict) = SessionState(
@@ -135,8 +133,8 @@ function handle_response(state::SessionState)
                 :type => var_info.type
             ) for (var, var_info) in state.user_vars
         ),
-        :imported_modules => state.imported_modules,
-        :callables => state.callables
+        :imported_modules => keys(state.imported_modules),
+        :callables => keys(state.callables)
     )
     handle_response(dict)
 end
@@ -155,16 +153,16 @@ function session_state()
 
         _state = Dict(
             :user_vars => Dict(),
-            :imported_modules => Symbol[],
-            :callables => Symbol[],
+            :imported_modules => Dict{Symbol, Module}(),
+            :callables => Dict{Symbol, Any}(),
         )
         _var_names = filter(!_is_hidden, names(Main; all=true, imported=true))
         for var in _var_names
             value = getproperty(Main, var)
             if isa(value, Module)
-                push!(_state[:imported_modules], var)
+                _state[:imported_modules][var] = value
             elseif typeof(value) <: Function
-                push!(_state[:callables], var)
+                _state[:callables][var] = value
             else
                 _state[:user_vars][var] = Dict(
                     :value => string(value),
@@ -197,6 +195,28 @@ function parse_check(code::AbstractString)
     else
         success = expr.head !== :incomplete
         Result(success, string(expr))
+    end
+end
+
+"""
+Execute code in a sandboxed REPL environment
+"""
+function eval_sandboxed(expr::Expr)
+    state = session_state()
+    try
+        eval(expr)
+    catch e
+        e
+    end
+
+end
+
+function eval_sandboxed(code::AbstractString)
+    parse_result = parse_check(code) 
+    if !parse_result.success
+        parse_result
+    else 
+        eval_sandboxed(Meta.parse(code))
     end
 end
 
