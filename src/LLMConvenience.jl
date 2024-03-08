@@ -2,6 +2,7 @@ module LLMConvenience
 
 export handle_response, fetch_docs, installed_dependencies, get_source, session_state, parse_check
 import Pkg
+import Serialization: serialize, deserialize
 using Revise
 import CodeTracking: definition, signature_at, whereis
 import StructTypes, JSON3, DisplayAs
@@ -203,10 +204,40 @@ Execute code in a sandboxed REPL environment
 """
 function eval_sandboxed(expr::Expr)
     state = session_state()
-    try
-        eval(expr)
-    catch e
-        e
+    project_dir = Pkg.project().path
+    mktemp() do path, _
+        serialize(path, state)
+        worker = Malt.Worker()
+        eval_in_worker(expr_gen) = Malt.remote_call_fetch(worker, expr_gen) 
+        eval_in_worker() do 
+            quote
+                using Pkg
+                Pkg.activate($project_dir)
+                _state = deserialize($path)
+            end
+        end
+        for (name, _) in state[:imported_modules]
+            eval_in_worker() do 
+                :(import $name) 
+            end
+        end
+        for (name, _) in state[:callables]
+            eval_in_worker() do 
+                :($name = _state[Symbol("$name")]) 
+            end
+        end
+        for (name, _) in state[:user_vars]
+            eval_in_worker() do 
+                :($name = _state[Symbol("$name")])
+            end
+        end
+        result = try
+            eval_in_worker() do expr end
+        catch e
+            e
+        end
+        Malt.stop(worker)
+        result 
     end
 
 end
