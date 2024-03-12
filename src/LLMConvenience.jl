@@ -111,7 +111,7 @@ end
 
 struct SessionState
     user_vars::Dict{Symbol, VarInfo}
-    imported_modules::Dict{Symbol, Module}
+    imported_modules::Vector{Symbol}
     callables::Dict{Symbol, Any}
 end
 
@@ -134,7 +134,7 @@ function handle_response(state::SessionState)
                 :type => var_info.type
             ) for (var, var_info) in state.user_vars
         ),
-        :imported_modules => keys(state.imported_modules),
+        :imported_modules => state.imported_modules,
         :callables => keys(state.callables)
     )
     handle_response(dict)
@@ -149,19 +149,19 @@ Currently, this pollutes the global namespace with 'hidden' variables i.e variab
 function session_state() 
     state = @eval Main begin
         _ignored_symbols = [:Base, :Core, :InteractiveUtils, :Main, :LLMConvenience]
-        _is_hidden_name(s) = string(s)[1] ∈ ['_', '#'] || s ∈ _ignored_symbols
+        _is_hidden_name(s) = string(s)[1] ∈ ['_', '#'] || s ∈ _ignored_symbols || s ∈ names(Base.MainInclude; all=true)
         _is_hidden(s) = _is_hidden_name(s)
 
         _state = Dict(
             :user_vars => Dict(),
-            :imported_modules => Dict{Symbol, Module}(),
+            :imported_modules => Vector{Symbol}(),
             :callables => Dict{Symbol, Any}(),
         )
         _var_names = filter(!_is_hidden, names(Main; all=true, imported=true))
         for var in _var_names
             value = getproperty(Main, var)
             if isa(value, Module)
-                _state[:imported_modules][var] = value
+                push!(_state[:imported_modules], var)
             elseif typeof(value) <: Function
                 _state[:callables][var] = value
             else
@@ -180,6 +180,10 @@ end
 struct Result 
     success::Bool
     reason::Union{String, Nothing}
+    output::Union{String, Nothing}
+    function Result(success::Bool, reason::Union{Nothing, String} = nothing, output::Union{Nothing, String} = nothing)
+        new(success, reason, output)
+    end
 end
 
 StructTypes.StructType(::Type{Result}) = StructTypes.Struct()
@@ -208,33 +212,32 @@ function eval_sandboxed(expr::Expr)
     mktemp() do path, _
         serialize(path, state)
         worker = Malt.Worker()
-        eval_in_worker(expr_gen) = Malt.remote_call_fetch(worker, expr_gen) 
-        eval_in_worker() do 
+        eval_in_worker(expr) = Malt.remote_eval_fetch(worker, expr) 
+        eval_in_worker( 
             quote
                 using Pkg
                 Pkg.activate($project_dir)
+                using LLMConvenience
                 _state = deserialize($path)
             end
+        )
+        for name in state.imported_modules
+            eval_in_worker(:(import $name))
         end
-        for (name, _) in state[:imported_modules]
-            eval_in_worker() do 
-                :(import $name) 
-            end
+        for (name, _) in state.callables
+            eval_in_worker(:($name = _state.callables[$(QuoteNode(name))]))
         end
-        for (name, _) in state[:callables]
-            eval_in_worker() do 
-                :($name = _state[Symbol("$name")]) 
-            end
+        for (name, _) in state.user_vars
+            eval_in_worker(:($name = _state.user_vars[$(QuoteNode(name))].value))
         end
-        for (name, _) in state[:user_vars]
-            eval_in_worker() do 
-                :($name = _state[Symbol("$name")])
-            end
-        end
+        output = nothing
+        output = eval_in_worker(expr)
         result = try
-            eval_in_worker() do expr end
+            output = eval_in_worker(expr)
         catch e
-            e
+            Result(false, string(e))
+        else
+            Result(true, nothing, string(output))
         end
         Malt.stop(worker)
         result 
