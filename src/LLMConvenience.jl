@@ -1,6 +1,6 @@
 module LLMConvenience
 
-export handle_response, fetch_docs, installed_dependencies, get_source, session_state, parse_check
+export handle_response, fetch_docs, installed_dependencies, fetch_source, session_state, parse_check, use_sandbox, mod_docs, mod_source
 import Pkg
 import Serialization: serialize, deserialize
 using Revise
@@ -44,40 +44,38 @@ Provide docs for selected members
 """
 function fetch_docs(member_names::AbstractVector{Symbol}, module_name::Symbol = :Main)
     docs = Dict(func => get_doc(func, module_name) for func in member_names)
-    handle_response(docs)
+    docs
 end
 
 """
-Fetch docs for module and its members
+Fetch docs for modules
 """
 function fetch_docs(mod::Module)
-    docs = Dict(:module => get_doc(mod))
-    docs[:functions] = Dict(func => get_doc(func) for func in names(mod))
-    handle_response(docs)
+    mod_name = Symbol(mod)
+    docs = Dict{Symbol, Any}(:module => string(eval(:(@doc $mod_name))))
+    docs[:members] = Dict(func => get_doc(func, Symbol(mod)) for func in names(mod;all=true))
+    docs
 end
 
-function installed_dependencies()
-    keys(Pkg.project().dependencies)
-end
 
-get_source(method::Method) = method |> string ∘ definition
+fetch_source(method::Method) = method |> string ∘ definition
 
-function get_source(func)
+function fetch_source(func)
     methods_source = Dict{String, String}()
     for method in methods(func)
         pretty_name = split(string(method), " @")[1]
-        methods_source[pretty_name] = get_source(method)
+        methods_source[pretty_name] = fetch_source(method)
     end
     methods_source
 end
 
-function get_source(mod::Module)
+function fetch_source(mod::Module)
     source = Dict{String, Dict{String, String}}()
     lineage(field) = split(string(field), ".")
     for field in names(mod; all=true, imported=true)
         if lineage(mod)[end] ∉ lineage(field) && '#' ∉ string(field)
             func = getfield(mod, field)
-            field_source = get_source(func)
+            field_source = fetch_source(func)
             if !isempty(field_source)
                 source[string(field)] = field_source
             end
@@ -86,173 +84,24 @@ function get_source(mod::Module)
     source
 end
 
-# """
-# Show docs for module under the `:module` key and individual function Documentation
-# is under the `:functions` key.
-# """
-# function get_mod_docs(mod::Module)
-#     docs = Dict(:module => get_doc(mod))
-#     docs[:functions] = Dict(func => get_doc(func) for func in names(mod))
-#     handle_response(docs)
-# end
-
-# get_mod_docs(mod::AbstractString) = mod |> get_mod_docs ∘ Symbol
-
-# function get_mod_docs(mod::Symbol)
-#     docs = Dict(:module => get_doc(mod))
-#     docs[:functions] = Dict(func => get_doc(func) for func in names(mod))
-#     handle_response(docs)
-# end
-
-struct VarInfo
-    value::Any
-    type::String
+function installed_dependencies()
+    keys(Pkg.project().dependencies)
 end
 
-struct SessionState
-    user_vars::Dict{Symbol, VarInfo}
-    imported_modules::Vector{Symbol}
-    callables::Dict{Symbol, Any}
-end
+include("state.jl")
+include("branching.jl")
 
-SessionState(d::AbstractDict) = SessionState(
-    Dict(name => VarInfo(entry[:value], entry[:type]) for (name, entry) in d[:user_vars]),
-    d[:imported_modules],
-    d[:callables]
-)
-
-"""
-Handle conversion to `application/json` content type for SessionState
-
-A separate method is needed since `SessionState` cannot use StructTypes
-"""
-function handle_response(state::SessionState)
-    dict = Dict(
-        :user_vars => Dict(
-            var => Dict(
-                :value => var_info.value,
-                :type => var_info.type
-            ) for (var, var_info) in state.user_vars
-        ),
-        :imported_modules => state.imported_modules,
-        :callables => keys(state.callables)
-    )
-    handle_response(dict)
-end
-
-"""
-Expression that indicates the currently available modules, user-defined variables, and callables 
-like functions in the current session.
-
-Currently, this pollutes the global namespace with 'hidden' variables i.e variables prepended with '_'.
-"""
-function session_state() 
-    state = @eval Main begin
-        _ignored_symbols = [:Base, :Core, :InteractiveUtils, :Main, :LLMConvenience]
-        _is_hidden_name(s) = string(s)[1] ∈ ['_', '#'] || s ∈ _ignored_symbols || s ∈ names(Base.MainInclude; all=true)
-        _is_hidden(s) = _is_hidden_name(s)
-
-        _state = Dict(
-            :user_vars => Dict(),
-            :imported_modules => Vector{Symbol}(),
-            :callables => Dict{Symbol, Any}(),
-        )
-        _var_names = filter(!_is_hidden, names(Main; all=true, imported=true))
-        for var in _var_names
-            value = getproperty(Main, var)
-            if isa(value, Module)
-                push!(_state[:imported_modules], var)
-            elseif typeof(value) <: Function
-                _state[:callables][var] = value
-            else
-                _state[:user_vars][var] = Dict(
-                    :value => string(value),
-                    :type => string(typeof(value))
-                )
-            end
-        end
-        _state
-    end
-    SessionState(state)
-end
-
-
-struct Result 
-    success::Bool
-    reason::Union{String, Nothing}
-    output::Union{String, Nothing}
-    function Result(success::Bool, reason::Union{Nothing, String} = nothing, output::Union{Nothing, String} = nothing)
-        new(success, reason, output)
+function mod_operation(name::Symbol, op::Symbol)
+    use_sandbox() do _, sandbox
+        quote
+            using LLMConvenience
+            import $name
+            $op($name)
+        end |> result(sandbox)
     end
 end
 
-StructTypes.StructType(::Type{Result}) = StructTypes.Struct()
-
-"""
-Check if the given code will parse
-"""
-function parse_check(code::AbstractString)
-    expr = nothing
-    try
-        expr = Meta.parse(code)
-    catch e
-        Result(false, string(e))
-    else
-        success = expr.head !== :incomplete
-        Result(success, string(expr))
-    end
-end
-
-"""
-Execute code in a sandboxed REPL environment
-"""
-function eval_sandboxed(expr::Expr)
-    state = session_state()
-    project_dir = Pkg.project().path
-    mktemp() do path, _
-        serialize(path, state)
-        worker = Malt.Worker()
-        eval_in_worker(expr) = Malt.remote_eval_fetch(worker, expr) 
-        eval_in_worker( 
-            quote
-                using Pkg
-                Pkg.activate($project_dir)
-                using LLMConvenience
-                _state = deserialize($path)
-            end
-        )
-        for name in state.imported_modules
-            eval_in_worker(:(import $name))
-        end
-        for (name, _) in state.callables
-            eval_in_worker(:($name = _state.callables[$(QuoteNode(name))]))
-        end
-        for (name, _) in state.user_vars
-            eval_in_worker(:($name = _state.user_vars[$(QuoteNode(name))].value))
-        end
-        output = nothing
-        output = eval_in_worker(expr)
-        result = try
-            output = eval_in_worker(expr)
-        catch e
-            Result(false, string(e))
-        else
-            Result(true, nothing, string(output))
-        end
-        Malt.stop(worker)
-        result 
-    end
-
-end
-
-function eval_sandboxed(code::AbstractString)
-    parse_result = parse_check(code) 
-    if !parse_result.success
-        parse_result
-    else 
-        eval_sandboxed(Meta.parse(code))
-    end
-end
-
+mod_docs(name::Symbol) = mod_operation(name, :fetch_docs)
+mod_source(name::Symbol) = mod_operation(name, :fetch_source)
 
 end # module LLMConvenience
